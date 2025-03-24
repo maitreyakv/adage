@@ -1,0 +1,15 @@
+[package]
+name = "adage"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+resolver = "2"
+members = ["./adage_core", "./adage_macros", "adage_core", "adage_macros"]
+
+[dependencies]
+adage_core = { path = "./adage_core" }
+adage_macros = { path = "./adage_macros" }
+
+[[example]]
+name = "simple"
