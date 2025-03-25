@@ -1,69 +1,56 @@
-use adage::{Context, Layer};
+use adage::{ctx, key};
 
 struct User {
     name: String,
     email: String,
 }
-type Users = Vec<User>;
 struct Message(String);
 
+#[adage::provides(Vec<User>)]
+#[adage::for_key(())]
 #[adage::requires_context]
 struct GetUsers;
-impl<C> Layer<C> for GetUsers
-where
-    C: _GetUsersContext,
-{
-    type Resource = Users;
-    type Key = ();
 
-    fn provide(&self, _key: &Self::Key, _ctx: C) -> Self::Resource {
-        vec![
-            User {
-                name: "Bugs Bunny".to_string(),
-                email: "bugs@looney.com".to_string(),
-            },
-            User {
-                name: "Daffy Duck".to_string(),
-                email: "daffy@looney.com".to_string(),
-            },
-        ]
-    }
+#[adage::provides_for(GetUsers)]
+fn get_users() {
+    vec![
+        User {
+            name: "Bugs Bunny".to_string(),
+            email: "bugs@looney.com".to_string(),
+        },
+        User {
+            name: "Daffy Duck".to_string(),
+            email: "daffy@looney.com".to_string(),
+        },
+    ]
 }
 
+#[adage::provides(Message)]
+#[adage::for_key(User)]
 #[adage::requires_context]
 struct Greet {
     greeting: String,
 }
-impl<C> Layer<C> for Greet
-where
-    C: _GreetContext,
-{
-    type Resource = Message;
-    type Key = User;
 
-    fn provide(&self, user: &Self::Key, _ctx: C) -> Self::Resource {
-        Message(format!("{} {}!", self.greeting, user.name))
-    }
+#[adage::provides_for(Greet)]
+fn greet() {
+    Message(format!("{} {}!", self.greeting, key!().name))
 }
 
+#[adage::provides(())]
+#[adage::for_key(())]
 #[adage::requires_context(
-    <Users>,
+    <Vec<User>>,
     <Message, User>,
 )]
 struct SendEmails;
-impl<C> Layer<C> for SendEmails
-where
-    C: _SendEmailsContext,
-{
-    type Resource = ();
-    type Key = ();
 
-    fn provide(&self, _key: &Self::Key, ctx: C) -> Self::Resource {
-        let users: Users = ctx.get(());
-        for user in users {
-            let greeting: Message = ctx.get(&user);
-            println!("Sending email to {}: {}", user.email, greeting.0)
-        }
+#[adage::provides_for(SendEmails)]
+fn send_emails() {
+    let users = ctx!();
+    for user in users {
+        let greeting = ctx![&user];
+        println!("Sending email to {}: {}", user.email, greeting.0)
     }
 }
 
