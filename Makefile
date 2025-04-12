@@ -21,4 +21,5 @@ watch:
 		-x "$(CARGO_FMT_CMD)" \
 		-x "$(CARGO_CLIPPY_CMD)" \
 		-x "$(CARGO_CHECK_CMD)" \
-		-x "$(CARGO_TEST_CMD)"
+		-x "$(CARGO_TEST_CMD)" \
+		-x "run --example simple"
