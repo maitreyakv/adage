@@ -1,4 +1,5 @@
-//! TODO: adage crate documentation
+//! [`adage`] (asynchronous directed acyclic graph executor) is a crate for creating
+//! task + flow style pipelines with asynchronous execution.
 
 mod executor;
 mod links;
