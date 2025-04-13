@@ -18,12 +18,6 @@ async fn send_email(email: String, name: (String, String)) {
     println!("Sending email to {}\nTo: {} {}, Hello!", email, first, last);
 }
 
-//#[adage::flow]
-//fn my_flow() {
-//    let email = get_email();
-//    let name = get_name();
-//    send_email(email, name);
-//}
 fn my_flow(ex: &impl Executor) {
     let email = get_email().submit(ex);
     let name = get_name().submit(ex);
