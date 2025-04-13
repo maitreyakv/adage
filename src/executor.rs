@@ -33,8 +33,12 @@ impl Executor for BasicExecutor {
     }
 
     async fn run(mut self) {
-        for queued_task in self.queue {
+        for queued_task in self.queue.drain(..) {
             self.running.push(queued_task.start().await);
+        }
+
+        for running_task in self.running {
+            running_task.join().await.unwrap();
         }
     }
 }

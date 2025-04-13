@@ -1,153 +1,154 @@
+use std::ops::Deref;
+
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
-use syn::{FnArg, Ident, ItemFn, Pat, PatIdent, PatType, Type};
+use quote::{ToTokens, format_ident, quote};
+use syn::{FnArg, Ident, ItemFn, Pat, PatIdent, PatType, ReturnType};
 
 #[proc_macro_attribute]
 pub fn task(
     _attr: proc_macro::TokenStream,
     task_ts: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let task_fn = TaskFn::parse(task_ts);
-    let receiver_impl = task_fn.impl_receiver();
-    let task_impl = task_fn.impl_task();
-
+    let task_item_fn = TaskItemFn::parse(task_ts);
+    let input_struct = impl_input_struct(&task_item_fn);
+    let input_receiver_struct = impl_input_receiver_struct(&task_item_fn);
+    let input_receiver_trait_impl = impl_input_receiver_trait_impl(&task_item_fn);
+    let task_fn_struct_and_impl = impl_task_fn_struct_and_impl(&task_item_fn);
+    let functional_constructor = impl_functional_constructor(&task_item_fn);
     quote! {
-        #receiver_impl
-        #task_impl
+        #input_struct
+        #input_receiver_struct
+        #input_receiver_trait_impl
+        #task_fn_struct_and_impl
+        #functional_constructor
     }
     .into()
 }
 
-struct TaskFn(ItemFn);
-impl TaskFn {
+struct TaskItemFn(ItemFn);
+impl Deref for TaskItemFn {
+    type Target = ItemFn;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl TaskItemFn {
     fn parse(stream: proc_macro::TokenStream) -> Self {
         Self(syn::parse(stream).expect("adage::task should only decorate async functions!"))
     }
 
-    fn name(&self) -> &Ident {
-        &self.0.sig.ident
+    fn args(&self) -> impl Iterator<Item = TaskPatType> {
+        self.sig.inputs.iter().cloned().map(|fn_arg| match fn_arg {
+            FnArg::Receiver(_) => panic!("adage::task cannot be used on struct methods!"),
+            FnArg::Typed(pat_type) => TaskPatType(pat_type),
+        })
     }
 
-    fn inputs(&self) -> impl Iterator<Item = TaskInput> {
-        self.0
-            .sig
-            .inputs
-            .iter()
-            .cloned()
-            .map(|fn_arg| match fn_arg {
-                FnArg::Receiver(_) => panic!("adage::task cannot be used on struct methods!"),
-                FnArg::Typed(pat_type) => TaskInput::parse(pat_type),
-            })
-    }
-
-    fn receiver_name(&self) -> Ident {
+    fn format_camel_ident(&self, suffix: &str) -> Ident {
         format_ident!(
-            "{}Receiver",
-            proc_macro2::Ident::new(
-                &heck::AsUpperCamelCase(self.name().to_string()).to_string(),
-                self.name().span()
-            )
+            "{}{}",
+            heck::AsUpperCamelCase(self.sig.ident.to_string()).to_string(),
+            suffix
         )
     }
+}
 
-    fn impl_receiver(&self) -> TokenStream {
-        let receiver_name = self.receiver_name();
-        let input_name = format_ident!(
-            "{}Input",
-            proc_macro2::Ident::new(
-                &heck::AsUpperCamelCase(self.name().to_string()).to_string(),
-                self.name().span()
-            )
-        );
-
-        let receiver_fields: Vec<TokenStream> = self
-            .inputs()
-            .map(|input| {
-                let TaskInput { ident, ty } = input;
-                quote! { #ident: ::tokio::sync::broadcast::Receiver<#ty> }
-            })
-            .collect();
-        let input_fields: Vec<TokenStream> = self
-            .inputs()
-            .map(|input| {
-                let TaskInput { ident, ty } = input;
-                quote! { #ident: #ty }
-            })
-            .collect();
-        let recv_stmts: Vec<TokenStream> = self
-            .inputs()
-            .map(|input| {
-                let TaskInput { ident, ty: _ } = input;
-                quote! { #ident: self.#ident.recv().await.unwrap() }
-            })
-            .collect();
-
-        quote! {
-            struct #receiver_name {
-                #( #receiver_fields),*
-            }
-            struct #input_name {
-                #( #input_fields ),*
-            }
-            impl ::adage::Receivable for #receiver_name {
-                type Data = #input_name;
-                async fn receive(mut self) -> Self::Data {
-                    Self::Data {
-                        #( #recv_stmts ),*
-
-                    }
-                }
-            }
+struct TaskPatType(PatType);
+impl Deref for TaskPatType {
+    type Target = PatType;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl TaskPatType {
+    fn name(&self) -> PatIdent {
+        match *self.pat.to_owned() {
+            Pat::Ident(pat_ident) => pat_ident,
+            _ => panic!("adage::task only support simple task arguments (e.g. `name: Type`)!"),
         }
     }
+}
 
-    fn impl_task(&self) -> TokenStream {
-        let name = self.name();
-        let inputs: Vec<TokenStream> = self
-            .inputs()
-            .map(|input| {
-                let TaskInput { ident, ty } = input;
-                quote! { #ident: &::adage::QueuedTask<#ty> }
-            })
-            .collect();
+fn impl_input_struct(task_item_fn: &TaskItemFn) -> TokenStream {
+    let ident = task_item_fn.format_camel_ident("Input");
+    let fields = task_item_fn.args().map(|tpt| PatType {
+        attrs: Vec::new(),
+        ..tpt.clone()
+    });
+    quote! { struct #ident { #( #fields ),* } }
+}
 
-        let receiver_name = self.receiver_name();
-        let link_stmts: Vec<TokenStream> = self
-            .inputs()
-            .map(|input| {
-                let TaskInput { ident, ty: _ } = input;
-                quote! { #ident: #ident.link() }
-            })
-            .collect();
+fn impl_input_receiver_struct(task_item_fn: &TaskItemFn) -> TokenStream {
+    let ident = task_item_fn.format_camel_ident("InputReceiver");
+    let fields = task_item_fn.args().map(|tpt| {
+        let name = tpt.name();
+        let ty = tpt.ty.clone();
+        quote! { #name: ::tokio::sync::broadcast::Receiver<#ty> }
+    });
+    quote! { struct #ident { #( #fields ),* } }
+}
 
-        quote! {
-            fn #name(#( #inputs),* ) {
-                let receiver = #receiver_name {
-                    #( #link_stmts ),*
-                };
-                ::adage::QueuedTask::new(receiver)
+fn impl_input_receiver_trait_impl(task_item_fn: &TaskItemFn) -> TokenStream {
+    let input_receiver_ident = task_item_fn.format_camel_ident("InputReceiver");
+    let input_ident = task_item_fn.format_camel_ident("Input");
+    let recv_stmts = task_item_fn.args().map(|tpt| {
+        let name = tpt.name();
+        quote! { #name: self.#name.recv().await.unwrap() }
+    });
+    quote! {
+        impl ::adage::prelude::InputReceiver for #input_receiver_ident {
+            type Data = #input_ident;
+            type Error = ::std::convert::Infallible;
+            async fn try_recv(mut self) -> Result<Self::Data, Self::Error> {
+                Ok(Self::Data { #( #recv_stmts ),* })
             }
         }
     }
 }
 
-struct TaskInput {
-    ident: PatIdent,
-    ty: Type,
+fn impl_task_fn_struct_and_impl(task_item_fn: &TaskItemFn) -> TokenStream {
+    let task_fn_ident = task_item_fn.format_camel_ident("TaskFn");
+    let input_ident = task_item_fn.format_camel_ident("Input");
+    let input_fields = task_item_fn.args().map(|tpt| tpt.name());
+    let output: TokenStream = match &task_item_fn.sig.output {
+        ReturnType::Default => quote!(()),
+        ReturnType::Type(_, ty) => ty.to_owned().to_token_stream(),
+    };
+    let body = task_item_fn.block.stmts.to_owned();
+    quote! {
+        struct #task_fn_ident;
+        impl ::adage::prelude::TaskFn for #task_fn_ident {
+            type Input = #input_ident;
+            type Output = #output;
+            async fn run(input: Self::Input) -> Self::Output {
+                let #input_ident { #( #input_fields ),* } = input;
+                #( #body )*
+            }
+        }
+    }
 }
-impl TaskInput {
-    fn parse(pat_type: PatType) -> Self {
-        match *pat_type.pat {
-            Pat::Ident(arg_ident) => {
-                let arg_type = pat_type.ty;
-                Self {
-                    ident: arg_ident,
-                    ty: *arg_type,
-                }
-            }
-            _ => {
-                panic!("adage::task only supports simple `name: Type` args!")
-            }
+
+fn impl_functional_constructor(task_item_fn: &TaskItemFn) -> TokenStream {
+    let constructor_ident = task_item_fn.sig.ident.to_owned();
+    let constructor_args = task_item_fn.args().map(|tpt| {
+        let name = tpt.name();
+        let ty = tpt.ty.to_owned();
+        quote!(#name: ::adage::prelude::Linker<#ty>)
+    });
+    let task_fn_ident = task_item_fn.format_camel_ident("TaskFn");
+    let input_receiver_ident = task_item_fn.format_camel_ident("InputReceiver");
+    let link_stmts = task_item_fn.args().map(|tpt| {
+        let name = tpt.name();
+        quote!(#name: #name.link())
+    });
+    quote! {
+        fn #constructor_ident(
+            #( #constructor_args ),*
+        ) -> ::adage::prelude::PlannedTask<#task_fn_ident, #input_receiver_ident> {
+            let input_receiver = #input_receiver_ident {
+                #( #link_stmts ),*
+            };
+            ::adage::prelude::PlannedTask::new(input_receiver)
         }
     }
 }

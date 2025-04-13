@@ -13,9 +13,8 @@ use crate::links::{InputReceiver, Linker};
 pub trait TaskFn: 'static {
     type Input;
     type Output: Clone + Debug + Send + 'static;
-    type Error: std::error::Error;
 
-    fn run(input: Self::Input) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send;
+    fn run(input: Self::Input) -> impl Future<Output = Self::Output> + Send;
 }
 
 pub struct PlannedTask<TF, IR>
@@ -64,8 +63,7 @@ where
                     // TODO: Better error handling for failed input receives
                     .expect("Failed to receive inputs!");
 
-                // TODO: Better error handling for crashed tasks
-                let output = TF::run(input).await.expect("Task failed to run!");
+                let output = TF::run(input).await;
 
                 // A [`tokio::sync::broadcast::error::SendError`] will only be returned if no
                 // receivers are active. Some tasks are leaf nodes in the DAG and won't have
