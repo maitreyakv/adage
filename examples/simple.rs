@@ -11,7 +11,7 @@ impl ::adage::TaskFn for GetEmailTaskFn {
         Ok(format!("{}@looney.com", "bugs"))
     }
 }
-fn get_email() -> ::adage::PlannedTask<::adage::EmptyReceiver, GetEmailTaskFn> {
+fn get_email() -> ::adage::PlannedTask<GetEmailTaskFn, ::adage::EmptyReceiver> {
     ::adage::PlannedTask::new(::adage::EmptyReceiver)
 }
 
@@ -32,7 +32,7 @@ impl ::adage::TaskFn for GetNameTaskFn {
         Ok((first, last))
     }
 }
-fn get_name() -> ::adage::PlannedTask<::adage::EmptyReceiver, GetNameTaskFn> {
+fn get_name() -> ::adage::PlannedTask<GetNameTaskFn, ::adage::EmptyReceiver> {
     ::adage::PlannedTask::new(::adage::EmptyReceiver)
 }
 
@@ -76,7 +76,7 @@ impl ::adage::TaskFn for SendEmailTaskFn {
 fn send_email(
     email: ::adage::Linker<String>,
     name: ::adage::Linker<(String, String)>,
-) -> ::adage::PlannedTask<SendEmailTaskFnInputReceiver, SendEmailTaskFn> {
+) -> ::adage::PlannedTask<SendEmailTaskFn, SendEmailTaskFnInputReceiver> {
     let input_receiver = SendEmailTaskFnInputReceiver {
         email: email.link(),
         name: name.link(),
@@ -84,6 +84,7 @@ fn send_email(
     ::adage::PlannedTask::new(input_receiver)
 }
 
+//#[adage::flow]
 //fn my_flow() {
 //    let email = get_email();
 //    let name = get_name();

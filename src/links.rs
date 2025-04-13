@@ -23,7 +23,7 @@ impl InputReceiver for EmptyReceiver {
 
 pub struct Linker<T>(Sender<T>);
 impl<T> Linker<T> {
-    pub fn new(sender: Sender<T>) -> Self {
+    pub(crate) fn new(sender: Sender<T>) -> Self {
         Self(sender)
     }
 

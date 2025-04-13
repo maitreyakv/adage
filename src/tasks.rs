@@ -1,16 +1,14 @@
 //! TODO: tasks module documentation
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use tokio::{
-    sync::broadcast::{Sender, channel},
+    sync::{Barrier, broadcast},
     task::JoinHandle,
 };
 
-use crate::{
-    executor::Executor,
-    links::{InputReceiver, Linker},
-};
+use crate::executor::Executor;
+use crate::links::{InputReceiver, Linker};
 
 pub trait TaskFn: 'static {
     type Input;
@@ -20,58 +18,76 @@ pub trait TaskFn: 'static {
     fn run(input: Self::Input) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send;
 }
 
-pub struct PlannedTask<IR, TF>
+pub struct PlannedTask<TF, IR>
 where
-    IR: InputReceiver<Data = TF::Input>,
     TF: TaskFn,
+    IR: InputReceiver<Data = TF::Input>,
 {
-    input_receiver: IR,
-    output_sender: Sender<TF::Output>,
+    input_rx: IR,
+    output_tx: broadcast::Sender<TF::Output>,
 }
-impl<IR, TF> PlannedTask<IR, TF>
+impl<TF, IR> PlannedTask<TF, IR>
 where
-    IR: InputReceiver<Data = TF::Input>,
     TF: TaskFn,
+    IR: InputReceiver<Data = TF::Input>,
 {
-    pub fn new(input_receiver: IR) -> Self {
-        let (output_sender, _) = channel(1);
+    pub fn new(input_rx: IR) -> Self {
+        let (output_tx, _) = broadcast::channel(1);
         Self {
-            input_receiver,
-            output_sender,
+            input_rx,
+            output_tx,
         }
     }
 
-    pub fn linker(&self) -> Linker<TF::Output> {
-        Linker::new(self.output_sender.clone())
-    }
-
     pub fn submit(self, ex: &mut impl Executor) -> Linker<TF::Output> {
-        ex.submit(self)
+        let linker = Linker::new(self.output_tx.clone());
+        ex.submit(self.queue());
+        linker
     }
 
-    pub fn start(self) -> RunningTask {
-        let Self {
-            input_receiver,
-            output_sender,
+    fn queue(self) -> QueuedTask {
+        let PlannedTask {
+            input_rx,
+            output_tx,
         } = self;
 
-        let handle = tokio::spawn(async move {
-            let input = input_receiver
-                .try_recv()
-                .await
-                // TODO: Better error handling for failed input receives
-                .expect("Failed to receive inputs!");
+        let start_gate = Arc::new(Barrier::new(2));
 
-            // TODO: Better error handling for crashed tasks
-            let output = TF::run(input).await.expect("Task failed to run!");
+        let handle = {
+            let start_gate = start_gate.clone();
+            tokio::spawn(async move {
+                start_gate.wait().await;
 
-            // A [`tokio::sync::broadcast::error::SendError`] will only be returned if no
-            // receivers are active. Some tasks are leaf nodes in the DAG and won't have
-            // downstream tasks to receive this task's output, so we ignore this error.
-            let _ = output_sender.send(output);
-        });
+                let input = input_rx
+                    .try_recv()
+                    .await
+                    // TODO: Better error handling for failed input receives
+                    .expect("Failed to receive inputs!");
 
-        RunningTask { handle }
+                // TODO: Better error handling for crashed tasks
+                let output = TF::run(input).await.expect("Task failed to run!");
+
+                // A [`tokio::sync::broadcast::error::SendError`] will only be returned if no
+                // receivers are active. Some tasks are leaf nodes in the DAG and won't have
+                // downstream tasks to receive this task's output, so we ignore this error.
+                let _ = output_tx.send(output);
+            })
+        };
+
+        QueuedTask { start_gate, handle }
+    }
+}
+
+pub struct QueuedTask {
+    start_gate: Arc<Barrier>,
+    handle: JoinHandle<()>,
+}
+impl QueuedTask {
+    pub async fn start(self) -> RunningTask {
+        self.start_gate.wait().await;
+        RunningTask {
+            handle: self.handle,
+        }
     }
 }
 
