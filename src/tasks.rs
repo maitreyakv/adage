@@ -38,7 +38,7 @@ where
         }
     }
 
-    pub fn submit(self, ex: &mut impl Executor) -> Linker<TF::Output> {
+    pub fn submit(self, ex: &impl Executor) -> Linker<TF::Output> {
         let linker = Linker::new(self.output_tx.clone());
         ex.submit(self.queue());
         linker

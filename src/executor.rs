@@ -1,23 +1,27 @@
 //! TODO: executor module documentation
 
-use crate::tasks::{QueuedTask, RunningTask};
+use std::{cell::RefCell, collections::VecDeque};
+
+use crate::tasks::QueuedTask;
 
 pub trait Executor {
-    fn submit(&mut self, task: QueuedTask);
+    fn submit(&self, task: QueuedTask);
 
-    fn run(self) -> impl Future<Output = ()>;
+    fn run(&self, flow: impl FnOnce(&Self)) -> impl Future<Output = ()>;
 }
 
 pub struct BasicExecutor {
-    queue: Vec<QueuedTask>,
-    running: Vec<RunningTask>,
+    queue: RefCell<VecDeque<QueuedTask>>,
 }
 impl BasicExecutor {
     pub fn new() -> Self {
         Self {
-            queue: Vec::new(),
-            running: Vec::new(),
+            queue: RefCell::new(VecDeque::new()),
         }
+    }
+
+    fn pop_queue(&self) -> Option<QueuedTask> {
+        self.queue.borrow_mut().pop_front()
     }
 }
 
@@ -28,16 +32,19 @@ impl Default for BasicExecutor {
 }
 
 impl Executor for BasicExecutor {
-    fn submit(&mut self, task: QueuedTask) {
-        self.queue.push(task);
+    fn submit(&self, task: QueuedTask) {
+        self.queue.borrow_mut().push_back(task);
     }
 
-    async fn run(mut self) {
-        for queued_task in self.queue.drain(..) {
-            self.running.push(queued_task.start().await);
+    async fn run(&self, flow: impl FnOnce(&Self)) {
+        flow(self);
+
+        let mut running = Vec::new();
+        while let Some(queued_task) = self.pop_queue() {
+            running.push(queued_task.start().await)
         }
 
-        for running_task in self.running {
+        for running_task in running.drain(..) {
             running_task.join().await.unwrap();
         }
     }

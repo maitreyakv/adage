@@ -15,8 +15,7 @@ async fn get_name() -> (String, String) {
 #[task]
 async fn send_email(email: String, name: (String, String)) {
     let (first, last) = name;
-    println!("Sending email to {}", email);
-    println!("To: {} {}, Hello!", first, last);
+    println!("Sending email to {}\nTo: {} {}, Hello!", email, first, last);
 }
 
 //#[adage::flow]
@@ -25,7 +24,7 @@ async fn send_email(email: String, name: (String, String)) {
 //    let name = get_name();
 //    send_email(email, name);
 //}
-fn my_flow(ex: &mut impl Executor) {
+fn my_flow(ex: &impl Executor) {
     let email = get_email().submit(ex);
     let name = get_name().submit(ex);
     send_email(email, name).submit(ex);
@@ -34,7 +33,5 @@ fn my_flow(ex: &mut impl Executor) {
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt().init();
-    let mut ex = BasicExecutor::new();
-    my_flow(&mut ex);
-    ex.run().await;
+    BasicExecutor::default().run(my_flow).await;
 }
